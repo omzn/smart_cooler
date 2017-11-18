@@ -14,4 +14,4 @@ The ESP-WROOM-02 provides a Web interface (and also Web APIs) for parameters and
 
 ## Wiring ##
 
-[Wiring](wire.md)
+![Wiring](https://github.com/omzn/smart_cooler/blob/master/wire.png?raw=true)

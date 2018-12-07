@@ -14,7 +14,7 @@ class fanCooler {
     int enable();
     int enableAutoFan();
     int disableAutoFan();
-    void control(float t);
+    bool control(float t);
     void on();
     void off();
     uint8_t status();

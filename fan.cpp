@@ -52,7 +52,7 @@ float fanCooler::lowLimit() {
   return _low_limit;
 }
 
-void fanCooler::control(float t) {
+bool fanCooler::control(float t) {
   if (_use_autofan) {
 #ifdef DEBUG
     Serial.print("T=");
@@ -67,10 +67,13 @@ void fanCooler::control(float t) {
     uint8_t v = value();
     if (t >= _high_limit && v == 0) {
       on();
+      return true;
     } else if (t <= _low_limit && v != 0) {
       off();
+      return true;
     }
   }
+  return false;
 }
 
 void fanCooler::on() {

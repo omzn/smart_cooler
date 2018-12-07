@@ -18,12 +18,11 @@ p{line-height: 1.6em;}
 .a-t,.if{max-width: 980px; margin: 0 auto;}
 .a-t{margin-bottom: 3.125em; text-align: center;}
 .at{border: 1px none #ddd; margin: 1em 0.5em 1em; padding: 0 0 0em;}
-.at-water .at-header{background: #00a0e9;}
-.at-air   .at-header{background: #f39800;}
+.at-humid .at-header{background: #00a0e9;}
+.at-temp   .at-header{background: #f39800;}
 .at-pressure .at-header{background: #8fc31f;}
-.at-humid .at-header{background: #920783;}
-.at-level .at-header{background: #1d2088;}
-.at-lighting .at-header{background: #ddd120;}
+.at-water .at-header{background: #920783;}
+.at-co2 .at-header{background: #1d2088;}
 .at-fan .at-header{background: #e4007f;}
 .at-header {padding-top:50px;height: 250px; width: 300px; background: #111; color: #fff; border-radius: 50%; -webkit-border-radius: 50%; -moz-border-radius: 50%;}
 .at-header h2{margin: 0; padding-top: 2em; font-size: 1em; font-weight: normal;}

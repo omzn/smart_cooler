@@ -1,3 +1,5 @@
+# Aqua-tan Smart cooler #
+
 ## Smart cooler ##
 
 Smart Cooler is simple. It has cooling fan and thermometer for water temperature.

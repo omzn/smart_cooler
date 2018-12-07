@@ -6,6 +6,7 @@
 
 #define UDP_LOCAL_PORT      (2390)
 #define NTP_PACKET_SIZE       (48)
+#define SECONDS_UTC_TO_JST (32400)
 
 class NTP {
   public:

@@ -8,6 +8,7 @@
 #define PIN_DS           (2) // pin 2 is hw pulled up
 
 #define I2C_BME280_ADDRESS 0x76
+#define I2C_CCS811_ADDRESS 0x5A // Default I2C Address
 
 //#define PIN_LIGHT        (2)
 //#define PIN_BUTTON       (0)
@@ -26,6 +27,10 @@
 #define EEPROM_MDNS_ADDR            (96)
 #define EEPROM_ID_ADDR              (128)
 #define EEPROM_ENABLE_ADDR          (129)
+// +0 : temperature
+// +1 : humidity
+// +2 : pressure
+// +3 : co2
 #define EEPROM_LAST_ADDR           (133)
 
 

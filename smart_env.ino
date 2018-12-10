@@ -1,16 +1,10 @@
 /*
-   Aquatan smart cooler
+   Aquatan smart env monitor
 
    API
-
-   /on
-      power=(int) // not recommended to use intermediate values
-   /off
    /status
    /config
-      enable=[true|false]
-      hi_l=(float)
-      lo_l=(float)
+     room_id = int
    /wifireset
    /reset
    /reboot
@@ -32,6 +26,7 @@
 #include <pgmspace.h>
 
 #include <Adafruit_BME280.h>
+#include <Adafruit_CCS811.h>
 #include <DallasTemperature.h>
 #include <OneWire.h>
 
@@ -75,6 +70,8 @@ ESP8266WebServer webServer(80);
 OneWire oneWire(PIN_DS);
 DallasTemperature ds18b20(&oneWire);
 Adafruit_BME280 bme;
+Adafruit_CCS811 ccs;
+
 LCD_ST7032 lcd;
 
 RTC_Millis rtc;
@@ -100,12 +97,74 @@ void setup() {
 
   Wire.begin(PIN_SDA, PIN_SCL);
   lcd.begin();
-  lcd.setcontrast(24);
+  // lcd.setcontrast(24);
   lcd.clear();
 
-  ds18b20.begin();
-  bme.begin(I2C_BME280_ADDRESS);
+  uint8_t charmap[8];
+  // Pa
+  charmap[0] = 0b11100;
+  charmap[1] = 0b10010;
+  charmap[2] = 0b11100;
+  charmap[3] = 0b10000;
+  charmap[4] = 0b10011;
+  charmap[5] = 0b10101;
+  charmap[6] = 0b10111;
+  charmap[7] = 0b00000;
+  lcd.createchar(0x00, charmap);
+  // pp
+  charmap[0] = 0b11100;
+  charmap[1] = 0b10010;
+  charmap[2] = 0b11100;
+  charmap[3] = 0b10110;
+  charmap[4] = 0b10101;
+  charmap[5] = 0b00110;
+  charmap[6] = 0b00100;
+  charmap[7] = 0b00000;
+  lcd.createchar(0x01, charmap);
+  // pm
+  charmap[0] = 0b11100;
+  charmap[1] = 0b10010;
+  charmap[2] = 0b11100;
+  charmap[3] = 0b10001;
+  charmap[4] = 0b11011;
+  charmap[5] = 0b10101;
+  charmap[6] = 0b10001;
+  charmap[7] = 0b00000;
+  lcd.createchar(0x02, charmap);
+  lcd.clear();
 
+  lcd.setCursor(0, 0);
+  lcd.print("Booting up...");
+
+  ds18b20.begin();
+  if (ds18b20.getDS18Count() > 0) {
+    e_temp = 1;
+#ifdef DEBUG
+    Serial.println("DS18B20 enabled.");
+#endif
+    lcd.setCursor(1, 0);
+    lcd.print("D");
+  }
+  if (bme.begin(I2C_BME280_ADDRESS)) {
+    e_humi = 1;
+    e_pres = 1;
+#ifdef DEBUG
+    Serial.println("BME280 enabled.");
+#endif
+    lcd.setCursor(1, 2);
+    lcd.print("B");
+  }
+  delay(200);
+  if (ccs.begin(I2C_CCS811_ADDRESS)) {
+    e_co2 = 1;
+#ifdef DEBUG
+    Serial.println("CCS811 enabled.");
+#endif
+    ccs.readData();
+    lcd.setCursor(1, 4);
+    lcd.print("C");
+  }
+  delay(200);
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   if (restoreConfig()) {
@@ -156,7 +215,7 @@ void setup() {
 #endif
   } else {
     ntp.begin();
-    ambient.begin(amb_channelId, amb_writeKey, &client);
+    //    ambient.begin(amb_channelId, amb_writeKey, &client);
     delay(200);
     startWebServer_normal();
 #ifdef DEBUG
@@ -205,10 +264,10 @@ void loop() {
           Serial.print("temp:");
           Serial.println(tempc);
 #endif
-          lcd.setCursor(0, 0); // LINE 1, ADDRESS 0
+          lcd.setCursor(0, 0);
           lcd.print(tempc, 1);
           lcd.write(0xdf);
-          lcd.setCursor(0, 5); // LINE 1, ADDRESS 0
+          lcd.setCursor(0, 5);
           lcd.print("C ");
         }
         if (e_humi) {
@@ -217,7 +276,7 @@ void loop() {
           Serial.print("humid:");
           Serial.println(humid);
 #endif
-          lcd.setCursor(0, 7); // LINE 1, ADDRESS 8
+          lcd.setCursor(0, 7);
           lcd.print(humid, 1);
           lcd.print("% ");
         }
@@ -227,13 +286,60 @@ void loop() {
           Serial.print("press:");
           Serial.println(pressure);
 #endif
-          lcd.setCursor(1, 0); // LINE 2, ADDRESS 0
-          lcd.print(pressure, 0);
-          lcd.print("hPa ");
+          lcd.setCursor(1, 0);
+          sprintf(str, "%4d", int(pressure));
+          lcd.print(str);
+          lcd.setCursor(1, 4);
+          lcd.print("h");
+          lcd.setCursor(1, 5);
+          lcd.write(0x00);
+          //          lcd.print("hPa");
         }
-
-        sprintf(str, "%02d:%02d", now.hour(), now.minute());
-        lcd.setCursor(1, 11); // LINE 2, ADDRESS 0
+        if (e_co2) {
+          while (!ccs.available())
+            ;
+          delay(100);
+          if (!ccs.readData()) {
+            ccs.setEnvironmentalData(humid, tempc);
+            //      Serial.print("eCO2: ");
+            co2 = ccs.geteCO2();
+#ifdef DEBUG
+            Serial.print("co2:");
+            Serial.println(co2);
+#endif
+            lcd.setCursor(1, 7);
+            sprintf(str, "%4d", int(co2));
+            lcd.print(str);
+            lcd.setCursor(1, 11);
+            lcd.write(0x01);
+            lcd.setCursor(1, 12);
+            lcd.print("m");
+            //            lcd.write(0x01);
+            //            lcd.print("ppm");
+          } else {
+            delay(100);
+#ifdef DEBUG
+            Serial.print("co2 error:");
+            Serial.println(ccs.readData());
+#endif
+            ccs.readData();
+            ccs.setEnvironmentalData(humid, tempc);
+            //      Serial.print("eCO2: ");
+            co2 = ccs.geteCO2();
+            lcd.setCursor(1, 7);
+            sprintf(str, "%4d", int(co2));
+            lcd.print(str);
+            lcd.setCursor(1, 11);
+            lcd.write(0x01);
+            lcd.setCursor(1, 12);
+            lcd.print("m");
+          }
+        }
+        sprintf(str, "%02d", now.hour());
+        lcd.setCursor(0, 14); // LINE 1, ADDRESS 14
+        lcd.print(str);
+        sprintf(str, "%02d", now.minute());
+        lcd.setCursor(1, 14); // LINE 2, ADDRESS 14
         lcd.print(str);
 
 #ifdef DEBUG
@@ -321,11 +427,6 @@ boolean restoreConfig() {
 #endif
 
   env_id = EEPROM.read(EEPROM_ID_ADDR);
-
-  e_temp = EEPROM.read(EEPROM_ENABLE_ADDR) == 1 ? 1 : 0;
-  e_humi = EEPROM.read(EEPROM_ENABLE_ADDR + 1) == 1 ? 1 : 0;
-  e_pres = EEPROM.read(EEPROM_ENABLE_ADDR + 2) == 1 ? 1 : 0;
-  e_co2 = EEPROM.read(EEPROM_ENABLE_ADDR + 3) == 1 ? 1 : 0;
 
   if (EEPROM.read(EEPROM_SSID_ADDR) != 0) {
     for (int i = EEPROM_SSID_ADDR; i < EEPROM_SSID_ADDR + 32; ++i) {
@@ -558,29 +659,13 @@ void handleConfig() {
       env_id = argv.toInt();
       EEPROM.write(EEPROM_ID_ADDR, char(env_id));
       EEPROM.commit();
-    } else if (argname == "enable_temp") {
-      e_temp = (argv == "true" ? 1 : 0);
-      EEPROM.write(EEPROM_SCHEDULE_ADDR, char(e_temp));
-      EEPROM.commit();
-    } else if (argname == "enable_humi") {
-      e_humi = (argv == "true" ? 1 : 0);
-      EEPROM.write(EEPROM_SCHEDULE_ADDR, char(e_humi));
-      EEPROM.commit();
-    } else if (argname == "enable_pres") {
-      e_pres = (argv == "true" ? 1 : 0);
-      EEPROM.write(EEPROM_SCHEDULE_ADDR, char(e_pres));
-      EEPROM.commit();
-    } else if (argname == "enable_co2") {
-      e_co2 = (argv == "true" ? 1 : 0);
-      EEPROM.write(EEPROM_SCHEDULE_ADDR, char(e_co2));
-      EEPROM.commit();
     }
   }
   json["id"] = env_id;
-  json["enable_temp"] = e_temp;
-  json["enable_humi"] = e_humi;
-  json["enable_pres"] = e_pres;
-  json["enable_co2"] = e_co2;
+  json["enable_temp"] = boolstr[e_temp];
+  json["enable_humi"] = boolstr[e_humi];
+  json["enable_pres"] = boolstr[e_pres];
+  json["enable_co2"] = boolstr[e_co2];
   json["timestamp"] = timestamp();
   json.printTo(message);
   webServer.send(200, "application/json", message);
@@ -593,14 +678,11 @@ void handleStatus() {
 #endif
   DynamicJsonBuffer jsonBuffer;
   JsonObject &json = jsonBuffer.createObject();
-  if (e_temp)
-    json["temperature"] = tempc;
-  if (e_pres)
-    json["pressure"] = pressure;
-  if (e_humi)
-    json["humidity"] = humid;
-  if (e_co2)
-    json["co2"] = co2;
+  json["id"] = env_id;
+  json["temperature"] = tempc;
+  json["pressure"] = pressure;
+  json["humidity"] = humid;
+  json["co2"] = co2;
   json["timestamp"] = timestamp();
   json.printTo(message);
   webServer.send(200, "application/json", message);

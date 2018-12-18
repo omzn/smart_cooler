@@ -1,6 +1,7 @@
 {
     "board": "esp8266:esp8266:generic",
-    "configuration": "CpuFrequency=80,VTable=flash,ResetMethod=ck,CrystalFreq=26,FlashFreq=40,FlashMode=qio,FlashSize=1M512,led=2,LwIPVariant=v2mss536,Debug=Disabled,DebugLevel=None____,FlashErase=none,UploadSpeed=115200",
+    "configuration": "CpuFrequency=80,VTable=flash,ResetMethod=ck,CrystalFreq=26,FlashFreq=40,FlashMode=qio,FlashSize=2M,led=2,LwIPVariant=v2mss536,Debug=Disabled,DebugLevel=None____,FlashErase=none,UploadSpeed=115200",
     "sketch": "smart_env.ino",
-    "port": "/dev/cu.usbserial-A107NALI"
+    "port": "192.168.3.8",
+    "output": "../ArduinoOutput"
 }

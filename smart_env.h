@@ -10,6 +10,8 @@
 #define I2C_BME280_ADDRESS 0x76
 #define I2C_CCS811_ADDRESS 0x5A // Default I2C Address
 
+#define INTERVAL   100
+
 //#define PIN_LIGHT        (2)
 //#define PIN_BUTTON       (0)
 //#define PIN_LED         (15)

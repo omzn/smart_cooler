@@ -12,12 +12,14 @@
 #include "smart_env.h" // Configuration parameters
 
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
 #include <DNSServer.h>
 #include <EEPROM.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 #include <FS.h>
+#include <OneWire.h>
 #include <RTClib.h>
 #include <SPI.h>
 #include <WiFiClient.h>
@@ -28,21 +30,13 @@
 #include <Adafruit_BME280.h>
 #include <Adafruit_CCS811.h>
 #include <DallasTemperature.h>
-#include <OneWire.h>
 
 #include <LCD_ST7032.h>
-
-#include "Ambient.h"
-
+//#include "Ambient.h"
 #include "ntp.h"
 
 const String boolstr[2] = {"false", "true"};
-
-const String website_name = "env01";
 const char *apSSID = "WIFI_ENV_TAN";
-String sitename;
-boolean settingMode;
-String ssidList;
 
 const char *localserver = "mowatmirror.local";
 const int localport = 3000;
@@ -50,7 +44,8 @@ const int localport = 3000;
 unsigned int amb_channelId = 5960;             // AmbientのチャネルID
 const char *amb_writeKey = "22147df5c1a201ac"; // ライトキー
 
-// String oled_contents[4];
+String website_name = "env01";
+boolean settingMode;
 
 int8_t env_id = 0;
 int8_t e_temp = 0;
@@ -59,14 +54,13 @@ int8_t e_pres = 0;
 int8_t e_co2 = 0;
 
 uint32_t timer_count = 0;
-uint32_t flash_count = 0;
-
 uint32_t p_millis;
 
 DNSServer dnsServer;
 MDNSResponder mdns;
 const IPAddress apIP(192, 168, 1, 1);
 ESP8266WebServer webServer(80);
+
 OneWire oneWire(PIN_DS);
 DallasTemperature ds18b20(&oneWire);
 Adafruit_BME280 bme;
@@ -76,13 +70,14 @@ LCD_ST7032 lcd;
 
 RTC_Millis rtc;
 WiFiClient client;
-Ambient ambient;
+// Ambient ambient;
+NTP ntp("ntp.nict.jp");
 
 float tempc, humid, pressure, co2;
 
-NTP ntp("ntp.nict.jp");
-
 void setup() {
+  ESP.wdtDisable();
+
   p_millis = millis();
   Serial.begin(115200);
   EEPROM.begin(512);
@@ -93,7 +88,6 @@ void setup() {
 #ifdef DEBUG
   Serial.println("RTC began");
 #endif
-  sitename = website_name;
 
   Wire.begin(PIN_SDA, PIN_SCL);
   lcd.begin();
@@ -105,21 +99,21 @@ void setup() {
   charmap[0] = 0b11100;
   charmap[1] = 0b10010;
   charmap[2] = 0b11100;
-  charmap[3] = 0b10000;
-  charmap[4] = 0b10011;
+  charmap[3] = 0b10011;
+  charmap[4] = 0b10101;
   charmap[5] = 0b10101;
   charmap[6] = 0b10111;
   charmap[7] = 0b00000;
   lcd.createchar(0x00, charmap);
   // pp
-  charmap[0] = 0b11100;
-  charmap[1] = 0b10010;
-  charmap[2] = 0b11100;
+  charmap[0] = 0b11000;
+  charmap[1] = 0b10100;
+  charmap[2] = 0b11000;
   charmap[3] = 0b10110;
   charmap[4] = 0b10101;
   charmap[5] = 0b00110;
   charmap[6] = 0b00100;
-  charmap[7] = 0b00000;
+  charmap[7] = 0b00100;
   lcd.createchar(0x01, charmap);
   // pm
   charmap[0] = 0b11100;
@@ -166,21 +160,18 @@ void setup() {
   }
   delay(200);
   WiFi.persistent(false);
+  settingMode = true;
   WiFi.mode(WIFI_STA);
   if (restoreConfig()) {
     if (checkConnection()) {
-      if (mdns.begin(sitename.c_str(), WiFi.localIP())) {
+      setupArduinoOTA();
 #ifdef DEBUG
-        Serial.println("MDNS responder started.");
+      Serial.println("Arduino OTA began.");
 #endif
-      }
       settingMode = false;
-    } else {
-      settingMode = true;
     }
-  } else {
-    settingMode = true;
   }
+
   if (settingMode == true) {
     lcd.setCursor(0, 0);
     lcd.print("Setting mode");
@@ -202,8 +193,6 @@ void setup() {
     WiFi.softAP(apSSID);
     dnsServer.start(53, "*", apIP);
 
-    lcd.setCursor(0, 1);
-    lcd.print("AP:" + String(apSSID));
 #ifdef DEBUG
     Serial.println("Wifi AP configured");
 #endif
@@ -213,6 +202,9 @@ void setup() {
     Serial.print(apSSID);
     Serial.println("\"");
 #endif
+
+    lcd.setCursor(1, 0);
+    lcd.print("AP:" + String(apSSID));
   } else {
     ntp.begin();
     //    ambient.begin(amb_channelId, amb_writeKey, &client);
@@ -222,7 +214,7 @@ void setup() {
     Serial.println("Starting normal operation.");
 #endif
   }
-  // ESP.wdtEnable(100);
+  ESP.wdtEnable(WDTO_8S);
 }
 
 void loop() {
@@ -234,15 +226,16 @@ void loop() {
   ESP.wdtFeed();
   if (settingMode) {
     dnsServer.processNextRequest();
+  } else {
+    ArduinoOTA.handle();
   }
   webServer.handleClient();
 
   if (!settingMode) {
-
     // 100ms秒毎に実行
-    if (millis() > p_millis + 100) {
+    if (millis() > p_millis + INTERVAL) {
       p_millis = millis();
-      if (timer_count % (3600 * 10) == 0) {
+      if (timer_count % (3600 * (1000/INTERVAL)) == 0) {
         uint32_t epoch = ntp.getTime();
         if (epoch > 0) {
           rtc.adjust(DateTime(epoch + SECONDS_UTC_TO_JST));
@@ -255,7 +248,7 @@ void loop() {
       now = rtc.now();
 
       // 2秒おき
-      if (timer_count % (2 * 10) == 0) {
+      if (timer_count % (2 * (1000/INTERVAL)) == 0) {
         // 温度計測
         if (e_temp) {
           ds18b20.requestTemperatures();
@@ -346,7 +339,7 @@ void loop() {
         Serial.println(env_id);
 #endif
 
-        if (timer_count % (300 * 10) == 0) {
+        if (timer_count % (300 * (1000/INTERVAL)) == (150 * (1000/INTERVAL))) {
           if (env_id > 0) {
 #ifdef DEBUG
             Serial.println("posted");
@@ -365,36 +358,10 @@ void loop() {
 
       delay(1);
       timer_count++;
-      timer_count %= (86400UL) * 10;
+      timer_count %= (86400UL) * (1000/INTERVAL);
     }
   }
   delay(10);
-}
-
-void post_data(int room, String label, float value) {
-  if (client.connect(localserver, localport)) {
-    // Create HTTP POST Data
-    String postData;
-    char str[64];
-
-    //    postData = "room=" + String(room) + "&label=" + label + "&value=" +
-    //    value;
-    sprintf(str, "room=%d&label=%s&value=%4.1f", room, label.c_str(), value);
-    postData += str;
-
-    client.print("POST /api/v1/add HTTP/1.1\n");
-    client.print("Host: ");
-    client.print(localserver);
-    client.print("\n");
-    client.print("Connection: close\n");
-    client.print("Content-Type: application/x-www-form-urlencoded\n");
-    client.print("Content-Length: ");
-    client.print(postData.length());
-    client.print("\n\n");
-
-    client.print(postData);
-    client.stop();
-  }
 }
 
 /***************************************************************
@@ -448,17 +415,17 @@ boolean restoreConfig() {
 #endif
     delay(100);
     if (EEPROM.read(EEPROM_MDNS_ADDR) != 0) {
-      sitename = "";
+      website_name = "";
       for (int i = 0; i < 32; ++i) {
         byte c = EEPROM.read(EEPROM_MDNS_ADDR + i);
         if (c == 0) {
           break;
         }
-        sitename += char(c);
+        website_name += char(c);
       }
 #ifdef DEBUG
-      Serial.print("sitename:");
-      Serial.println(sitename);
+      Serial.print("website name:");
+      Serial.println(website_name);
 #endif
     }
     return true;
@@ -471,116 +438,8 @@ boolean restoreConfig() {
 }
 
 /***************************************************************
-   Network functions
- ***************************************************************/
-
-boolean checkConnection() {
-  int count = 0;
-  while (count < 60) {
-    if (WiFi.status() == WL_CONNECTED) {
-      return true;
-    }
-    delay(500);
-#ifdef DEBUG
-    Serial.print(".");
-#endif
-    count++;
-  }
-#ifdef DEBUG
-  Serial.println("Timed out.");
-#endif
-  return false;
-}
-
-/***********************************************************
-   WiFi Client functions
-
- ***********************************************************/
-
-/***************************************************************
    Web server functions
  ***************************************************************/
-
-void startWebServer_setting() {
-#ifdef DEBUG
-  Serial.print("Starting Web Server at ");
-  Serial.println(WiFi.softAPIP());
-#endif
-  webServer.on("/pure.css", handleCss);
-  webServer.on("/setap", []() {
-#ifdef DEBUG
-    Serial.print("Set AP ");
-    Serial.println(WiFi.softAPIP());
-#endif
-    for (int i = 0; i < EEPROM_MDNS_ADDR; ++i) {
-      EEPROM.write(i, 0);
-    }
-    String ssid = urlDecode(webServer.arg("ssid"));
-    String pass = urlDecode(webServer.arg("pass"));
-    String site = urlDecode(webServer.arg("site"));
-    for (int i = 0; i < ssid.length(); ++i) {
-      EEPROM.write(EEPROM_SSID_ADDR + i, ssid[i]);
-    }
-    for (int i = 0; i < pass.length(); ++i) {
-      EEPROM.write(EEPROM_PASS_ADDR + i, pass[i]);
-    }
-    if (site != "") {
-      for (int i = EEPROM_MDNS_ADDR; i < EEPROM_MDNS_ADDR + 32; ++i) {
-        EEPROM.write(i, 0);
-      }
-      for (int i = 0; i < site.length(); ++i) {
-        EEPROM.write(EEPROM_MDNS_ADDR + i, site[i]);
-      }
-    }
-    EEPROM.commit();
-    String s = "<h2>Setup complete</h2><p>Device will be connected to \"";
-    s += ssid;
-    s += "\" after the restart.</p><p>Your computer also need to re-connect to "
-         "\"";
-    s += ssid;
-    s += "\".</p><p><button class=\"pure-button\" onclick=\"return "
-         "quitBox();\">Close</button></p>";
-    s += "<script>function quitBox() { open(location, '_self').close();return "
-         "false;};setTimeout(\"quitBox()\",10000);</script>";
-    webServer.send(200, "text/html", makePage("Wi-Fi Settings", s));
-    timer_count = 0;
-  });
-  webServer.onNotFound([]() {
-#ifdef DEBUG
-    Serial.println("captive webpage ");
-#endif
-    int n = WiFi.scanNetworks();
-    delay(100);
-    ssidList = "";
-    for (int i = 0; i < n; ++i) {
-      ssidList += "<option value=\"";
-      ssidList += WiFi.SSID(i);
-      ssidList += "\">";
-      ssidList += WiFi.SSID(i);
-      ssidList += "</option>";
-    }
-    String s = R"=====(
-<div class="l-content">
-<div class="l-box">
-<h3 class="if-head">WiFi Setting</h3>
-<p>Please enter your password by selecting the SSID.<br />
-You can specify site name for accessing a name like http://aquamonitor.local/</p>
-<form class="pure-form pure-form-stacked" method="get" action="setap" name="tm"><label for="ssid">SSID: </label>
-<select id="ssid" name="ssid">
-)=====";
-    s += ssidList;
-    s += R"=====(
-</select>
-<label for="pass">Password: </label><input id="pass" name="pass" length=64 type="password">
-<label for="site" >Site name: </label><input id="site" name="site" length=32 type="text" placeholder="Site name">
-<button class="pure-button pure-button-primary" type="submit">Submit</button></form>
-</div>
-</div>
-)=====";
-    webServer.send(200, "text/html", makePage("Wi-Fi Settings", s));
-  });
-  webServer.begin();
-}
 
 /*
  * Web server for normal operation
@@ -590,59 +449,18 @@ void startWebServer_normal() {
   Serial.print("Starting Web Server at ");
   Serial.println(WiFi.localIP());
 #endif
-  webServer.on("/reset", []() {
-    for (int i = 0; i < EEPROM_LAST_ADDR; ++i) {
-      EEPROM.write(i, 0);
-    }
-    EEPROM.commit();
-    String s = "<h3 class=\"if-head\">Reset ALL</h3><p>Cleared all settings. "
-               "Please reset device.</p>";
-    s += "<p><button class=\"pure-button\" onclick=\"return "
-         "quitBox();\">Close</button></p>";
-    s += "<script>function quitBox() { open(location, '_self').close();return "
-         "false;};</script>";
-    webServer.send(200, "text/html", makePage("Reset ALL Settings", s));
-    timer_count = 0;
-  });
-  webServer.on("/wifireset", []() {
-    for (int i = 0; i < EEPROM_MDNS_ADDR; ++i) {
-      EEPROM.write(i, 0);
-    }
-    EEPROM.commit();
-    String s = "<h3 class=\"if-head\">Reset WiFi</h3><p>Cleared WiFi settings. "
-               "Please reset device.</p>";
-    s += "<p><button class=\"pure-button\" onclick=\"return "
-         "quitBox();\">Close</button></p>";
-    s += "<script>function quitBox() { open(location, '_self').close();return "
-         "false;}</script>";
-    webServer.send(200, "text/html", makePage("Reset WiFi Settings", s));
-    timer_count = 0;
-  });
   webServer.on("/", handleRoot);
   webServer.on("/pure.css", handleCss);
+  webServer.on("/reset", handleAllReset);
+  webServer.on("/wifireset", handleWiFiReset);
   webServer.on("/reboot", handleReboot);
   webServer.on("/status", handleStatus);
   webServer.on("/config", handleConfig);
   webServer.begin();
 }
 
-void handleRoot() { send_fs("/index.html", "text/html"); };
-
-void handleCss() { send_fs("/pure.css", "text/css"); };
-
-void handleReboot() {
-  String message;
-  message = "{reboot:\"done\"}";
-  webServer.send(200, "application/json", message);
-  ESP.restart();
-}
-
 void handleConfig() {
   String message, argname, argv;
-  int16_t high_limit_int, low_limit_int;
-#ifdef DEBUG
-  Serial.println("config command");
-#endif
   DynamicJsonBuffer jsonBuffer;
   JsonObject &json = jsonBuffer.createObject();
 
@@ -687,6 +505,214 @@ void handleStatus() {
   json.printTo(message);
   webServer.send(200, "application/json", message);
 }
+
+void handleRoot() { send_fs("/index.html", "text/html"); };
+
+void handleCss() { send_fs("/pure.css", "text/css"); };
+
+void handleWiFiReset() {
+  for (int i = 0; i < EEPROM_MDNS_ADDR; ++i) {
+    EEPROM.write(i, 0);
+  }
+  EEPROM.commit();
+  String s = "<h3 class=\"if-head\">Reset WiFi</h3><p>Cleared WiFi settings. "
+             "Please reset device.</p>";
+  s += "<p><button class=\"pure-button\" onclick=\"return "
+       "quitBox();\">Close</button></p>";
+  s += "<script>function quitBox() { open(location, '_self').close();return "
+       "false;}</script>";
+  webServer.send(200, "text/html", makePage("Reset WiFi Settings", s));
+  timer_count = 0;
+  ESP.restart();
+  while (1) {
+    delay(0);
+  }
+}
+
+void handleAllReset() {
+  for (int i = 0; i < EEPROM_LAST_ADDR; ++i) {
+    EEPROM.write(i, 0);
+  }
+  EEPROM.commit();
+  String s = "<h3 class=\"if-head\">Reset ALL</h3><p>Cleared all settings. "
+             "Please reset device.</p>";
+  s += "<p><button class=\"pure-button\" onclick=\"return "
+       "quitBox();\">Close</button></p>";
+  s += "<script>function quitBox() { open(location, '_self').close();return "
+       "false;};</script>";
+  webServer.send(200, "text/html", makePage("Reset ALL Settings", s));
+  timer_count = 0;
+  ESP.restart();
+  while (1) {
+    delay(0);
+  }
+}
+
+void handleReboot() {
+  String message;
+  message = "{reboot:\"done\"}";
+  webServer.send(200, "application/json", message);
+  ESP.restart();
+  while (1) {
+    delay(0);
+  }
+}
+
+/*******************************************
+ * 
+ * HEREAFTER, LESS TO BE CHANGED 
+ * 
+ * 
+ * 
+ * 
+ * 
+ ******************************************** */
+
+
+/* Web server (setting mode) */
+
+void startWebServer_setting() {
+#ifdef DEBUG
+  Serial.print("Starting Web Server at ");
+  Serial.println(WiFi.softAPIP());
+#endif
+  webServer.on("/pure.css", handleCss);
+  webServer.on("/setap", []() {
+#ifdef DEBUG
+    Serial.print("Set AP ");
+    Serial.println(WiFi.softAPIP());
+#endif
+    for (int i = 0; i < EEPROM_MDNS_ADDR; ++i) {
+      EEPROM.write(i, 0);
+    }
+    String ssid = urlDecode(webServer.arg("ssid"));
+    String pass = urlDecode(webServer.arg("pass"));
+    String site = urlDecode(webServer.arg("site"));
+    for (int i = 0; i < ssid.length(); ++i) {
+      EEPROM.write(EEPROM_SSID_ADDR + i, ssid[i]);
+    }
+    for (int i = 0; i < pass.length(); ++i) {
+      EEPROM.write(EEPROM_PASS_ADDR + i, pass[i]);
+    }
+    if (site != "") {
+      for (int i = EEPROM_MDNS_ADDR; i < EEPROM_MDNS_ADDR + 32; ++i) {
+        EEPROM.write(i, 0);
+      }
+      for (int i = 0; i < site.length(); ++i) {
+        EEPROM.write(EEPROM_MDNS_ADDR + i, site[i]);
+      }
+    }
+    EEPROM.commit();
+    String s = "<h2>Setup complete</h2><p>Device will be connected to \"";
+    s += ssid;
+    s += "\" after the restart.</p><p>Your computer also need to re-connect to "
+         "\"";
+    s += ssid;
+    s += "\".</p><p><button class=\"pure-button\" onclick=\"return "
+         "quitBox();\">Close</button></p>";
+    s += "<script>function quitBox() { open(location, '_self').close();return "
+         "false;};setTimeout(\"quitBox()\",10000);</script>";
+    webServer.send(200, "text/html", makePage("Wi-Fi Settings", s));
+    timer_count = 0;
+    ESP.restart();
+    while (1) {
+      delay(0);
+    }
+  });
+  webServer.onNotFound([]() {
+    String ssidList;
+#ifdef DEBUG
+    Serial.println("captive webpage ");
+#endif
+    int n = WiFi.scanNetworks();
+    delay(100);
+    ssidList = "";
+    for (int i = 0; i < n; ++i) {
+      ssidList += "<option value=\"";
+      ssidList += WiFi.SSID(i);
+      ssidList += "\">";
+      ssidList += WiFi.SSID(i);
+      ssidList += "</option>";
+    }
+    String s = R"=====(
+<div class="l-content">
+<div class="l-box">
+<h3 class="if-head">WiFi Setting</h3>
+<p>Please enter your password by selecting the SSID.<br />
+You can specify site name for accessing a name like http://aquamonitor.local/</p>
+<form class="pure-form pure-form-stacked" method="get" action="setap" name="tm"><label for="ssid">SSID: </label>
+<select id="ssid" name="ssid">
+)=====";
+    s += ssidList;
+    s += R"=====(
+</select>
+<label for="pass">Password: </label><input id="pass" name="pass" length=64 type="password">
+<label for="site" >Site name: </label><input id="site" name="site" length=32 type="text" placeholder="Site name">
+<button class="pure-button pure-button-primary" type="submit">Submit</button></form>
+</div>
+</div>
+)=====";
+    webServer.send(200, "text/html", makePage("Wi-Fi Settings", s));
+  });
+  webServer.begin();
+}
+
+/***************************************************************
+   Network functions
+ ***************************************************************/
+
+boolean checkConnection() {
+  int count = 0;
+  while (count < 20) {
+    ESP.wdtFeed();
+    if (WiFi.status() == WL_CONNECTED) {
+      return true;
+    }
+    delay(500);
+#ifdef DEBUG
+    Serial.print(".");
+#endif
+    count++;
+  }
+#ifdef DEBUG
+  Serial.println("Timed out.");
+#endif
+  return false;
+}
+
+/***********************************************************
+   WiFi Client functions
+
+ ***********************************************************/
+void post_data(int room, String label, float value) {
+  if (client.connect(localserver, localport)) {
+    // Create HTTP POST Data
+    String postData;
+    char str[64];
+
+    //    postData = "room=" + String(room) + "&label=" + label + "&value=" +
+    //    value;
+    sprintf(str, "room=%d&label=%s&value=%4.1f", room, label.c_str(), value);
+    postData += str;
+
+    client.print("POST /api/v1/add HTTP/1.1\n");
+    client.print("Host: ");
+    client.print(localserver);
+    client.print("\n");
+    client.print("Connection: close\n");
+    client.print("Content-Type: application/x-www-form-urlencoded\n");
+    client.print("Content-Length: ");
+    client.print(postData.length());
+    client.print("\n\n");
+
+    client.print(postData);
+    client.stop();
+  }
+}
+
+/*
+  Utilities
+*/
 
 String timestamp() {
   String ts;
@@ -773,4 +799,41 @@ String urlDecode(String input) {
   s.replace("%5F", "-");
   s.replace("%60", "`");
   return s;
+}
+
+void setupArduinoOTA() {
+  ArduinoOTA.setPort(8266);
+  // Hostname defaults to esp8266-[ChipID]
+  ArduinoOTA.setHostname(website_name.c_str());
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_SPIFFS
+      type = "filesystem";
+    }
+    // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS
+    // using SPIFFS.end()
+    Serial.println("Start updating " + type);
+  });
+  ArduinoOTA.onEnd([]() { Serial.println("\nEnd"); });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+  ArduinoOTA.begin();
+  delay(100);
 }

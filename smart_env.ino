@@ -74,9 +74,21 @@ WiFiClient client;
 NTP ntp("ntp.nict.jp");
 
 float tempc, humid, pressure, co2;
+float tempc_hist[300];
+float humid_hist[300];
+float pressure_hist[300];
+float co2_hist[300];
+uint16_t tempc_hist_idx = 0, humid_hist_idx = 0, pressure_hist_idx =0, co2_hist_idx =0;
 
 void setup() {
   ESP.wdtDisable();
+
+  for (int i=0;i<HIST_MAX;i++) {
+    tempc_hist[i] = -500;
+    humid_hist[i] = -500;
+    pressure_hist[i] = -500;
+    co2_hist[i] = -500;
+  }
 
   p_millis = millis();
   Serial.begin(115200);
@@ -257,6 +269,9 @@ void loop() {
           Serial.print("temp:");
           Serial.println(tempc);
 #endif
+          tempc_hist[tempc_hist_idx++] = tempc;
+          tempc_hist_idx %= HIST_MAX;
+
           lcd.setCursor(0, 0);
           lcd.print(tempc, 1);
           lcd.write(0xdf);
@@ -269,6 +284,8 @@ void loop() {
           Serial.print("humid:");
           Serial.println(humid);
 #endif
+          humid_hist[humid_hist_idx++] = humid;
+          humid_hist_idx %= HIST_MAX;
           lcd.setCursor(0, 7);
           lcd.print(humid, 1);
           lcd.print("% ");
@@ -279,6 +296,8 @@ void loop() {
           Serial.print("press:");
           Serial.println(pressure);
 #endif
+          pressure_hist[pressure_hist_idx++] = pressure;
+          pressure_hist_idx %= HIST_MAX;
           lcd.setCursor(1, 0);
           sprintf(str, "%4d", int(pressure));
           lcd.print(str);
@@ -300,6 +319,8 @@ void loop() {
             Serial.print("co2:");
             Serial.println(co2);
 #endif
+            co2_hist[co2_hist_idx++] = co2;
+            co2_hist_idx %= HIST_MAX;
             lcd.setCursor(1, 7);
             sprintf(str, "%4d", int(co2));
             lcd.print(str);
@@ -345,13 +366,13 @@ void loop() {
             Serial.println("posted");
 #endif
             if (e_temp)
-              post_data(env_id, "temperature", tempc);
+              post_data(env_id, "temperature", mean(tempc_hist,tempc_hist_idx));
             if (e_humi)
-              post_data(env_id, "humidity", humid);
+              post_data(env_id, "humidity", mean(humid_hist,humid_hist_idx));
             if (e_pres)
-              post_data(env_id, "pressure", pressure);
+              post_data(env_id, "pressure", mean(pressure_hist,pressure_hist_idx));
             if (e_co2)
-              post_data(env_id, "co2", co2);
+              post_data(env_id, "co2", mean(co2_hist,co2_hist_idx));
           }
         }
       }
@@ -836,4 +857,16 @@ void setupArduinoOTA() {
   });
   ArduinoOTA.begin();
   delay(100);
+}
+
+float mean(float hist[], uint16_t idx) {
+  uint16_t histmax = HIST_MAX;
+  float result;
+  if (hist[HIST_MAX - 1] == -500) {
+    histmax = idx;
+  }
+  for (int i = 0; i < histmax; i++) {
+    result += hist[i]; 
+  }
+  return (result / float(histmax));
 }

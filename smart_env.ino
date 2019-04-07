@@ -44,7 +44,7 @@ const int localport = 3000;
 unsigned int amb_channelId = 5960;             // AmbientのチャネルID
 const char *amb_writeKey = "22147df5c1a201ac"; // ライトキー
 
-String website_name = "env01";
+String website_name = "mowatenv";
 boolean settingMode;
 
 int8_t env_id = 0;
@@ -103,7 +103,7 @@ void setup() {
 
   Wire.begin(PIN_SDA, PIN_SCL);
   lcd.begin();
-  // lcd.setcontrast(24);
+  // lcd.setcontrast(12);
   lcd.clear();
 
   uint8_t charmap[8];
@@ -152,6 +152,7 @@ void setup() {
     lcd.print("D");
   }
   if (bme.begin(I2C_BME280_ADDRESS)) {
+    e_temp = 2;
     e_humi = 1;
     e_pres = 1;
 #ifdef DEBUG
@@ -262,16 +263,36 @@ void loop() {
       // 2秒おき
       if (timer_count % (2 * (1000/INTERVAL)) == 0) {
         // 温度計測
-        if (e_temp) {
+        if (e_temp == 1) {
           ds18b20.requestTemperatures();
           tempc = ds18b20.getTempCByIndex(0);
+
 #ifdef DEBUG
           Serial.print("temp:");
           Serial.println(tempc);
 #endif
+          if (tempc < -50.0) {
+            e_temp = 0;
+          } else {
+            e_temp = 1;
+            tempc_hist[tempc_hist_idx++] = tempc;
+            tempc_hist_idx %= HIST_MAX;
+          }
+
+          lcd.setCursor(0, 0);
+          lcd.print(tempc, 1);
+          lcd.write(0xdf);
+          lcd.setCursor(0, 5);
+          lcd.print("C ");
+        }
+        if (e_temp == 2) {
+          tempc = bme.readTemperature();          
           tempc_hist[tempc_hist_idx++] = tempc;
           tempc_hist_idx %= HIST_MAX;
-
+#ifdef DEBUG
+          Serial.print("temp(bme):");
+          Serial.println(tempc);
+#endif
           lcd.setCursor(0, 0);
           lcd.print(tempc, 1);
           lcd.write(0xdf);
@@ -340,6 +361,10 @@ void loop() {
             ccs.setEnvironmentalData(humid, tempc);
             //      Serial.print("eCO2: ");
             co2 = ccs.geteCO2();
+
+            co2_hist[co2_hist_idx++] = co2;
+            co2_hist_idx %= HIST_MAX;
+
             lcd.setCursor(1, 7);
             sprintf(str, "%4d", int(co2));
             lcd.print(str);
@@ -501,7 +526,7 @@ void handleConfig() {
     }
   }
   json["id"] = env_id;
-  json["enable_temp"] = boolstr[e_temp];
+  json["enable_temp"] = boolstr[(e_temp > 0)];
   json["enable_humi"] = boolstr[e_humi];
   json["enable_pres"] = boolstr[e_pres];
   json["enable_co2"] = boolstr[e_co2];
@@ -780,7 +805,7 @@ String makePage(String title, String contents) {
   s += contents;
   s += R"=====(
 <div class="footer l-box">
-<p>WiFi Aquatan-Light by @omzn 2017 / All rights researved</p>
+<p>Aquatan environment monitor by @omzn 2018</p>
 </div>
 )=====";
   s += "</body></html>";
